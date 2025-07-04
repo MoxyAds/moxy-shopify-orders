@@ -1,0 +1,32 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "5ce97e211867db2807e56152426ac4f5"
+name = "moxy-demo"
+handle = "moxy-demo"
+application_url = "https://describe-browsers-worldcat-qt.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[webhooks]
+api_version = "2025-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,read_discounts,read_fulfillments,read_orders,read_products,read_shipping,write_discounts,write_fulfillments,write_orders,write_products,write_shipping"
+
+[auth]
+redirect_urls = ["https://describe-browsers-worldcat-qt.trycloudflare.com/auth/callback", "https://describe-browsers-worldcat-qt.trycloudflare.com/auth/shopify/callback", "https://describe-browsers-worldcat-qt.trycloudflare.com/api/auth/callback"]
+
+[pos]
+embedded = false
