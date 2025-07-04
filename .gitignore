@@ -1,55 +1,44 @@
-################################################################################
-# Node / TypeScript
-################################################################################
+# ───── Node / PNPM / Yarn / NPM ─────
 node_modules/
+.pnpm/
+.jspm/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-store/
-.package-lock.json
+pnpm-debug.log*
 
-# Bun, pnpm, corepack
-.bun/
-.pnp.*
-.pnpm-debug.log*
+# ───── Remix build artefacts ─────
+.build/          # Remix’s production build (if you ever run `remix build`)
+public/build/    # Vite-emitted client bundles (hash-named)
 
-################################################################################
-# Remix / Vite / Playwright / Vitest               (feel free to trim extras)
-################################################################################
-.build/
-public/build/
-dist/
+# ───── Vite / esbuild cache ─────
 .vite/
-.vitest/
-.playwright/
+dist/
+.cache/
+
+# ───── Shopify CLI ─────
+.shopify/        # tunnel certs, cached metadata
+.env             # API keys, DB urls, etc.
+*.pem            # mkcert or Cloudflare certs that land in the repo root
+
+# ───── Databases & prisma artefacts (if you use SQLite locally) ─────
+*.sqlite
+*.sqlite-journal
+prisma/migrations/
+
+# ───── Testing / coverage ─────
 coverage/
+*.lcov
+
+# ───── OS / editor junk ─────
 .DS_Store
-
-################################################################################
-# Shopify-CLI generated state
-################################################################################
-.shopify/            # CLI metadata, tokens, certs
-.cache/shopify/      # Cloudflare tunnel downloads
-
-################################################################################
-# Prisma & SQLite dev DB
-################################################################################
-prisma/dev.sqlite
-prisma/*.db
-prisma/migrations/*/README.md          # generated
-
-################################################################################
-# Env / secrets
-################################################################################
-.env*
-!.env.example        # keep a redacted template if you like
-
-################################################################################
-# OS / editor swivel
-################################################################################
-*.swp               # vim
-*.swo               # vim
-*.idea/             # JetBrains
-*.vscode/           # local VS-Code settings
 Thumbs.db
-.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sw?
+
+# ───── optional: macOS/Linux files you never want to commit ─────
+*.orig
