@@ -5,6 +5,7 @@ import {
   ResourceList,
   ResourceItem,
   Spinner,
+  Thumbnail,
   Badge,
   Box,
 } from "@shopify/polaris";
@@ -15,6 +16,7 @@ export interface Product {
   id: string;        // gid://…
   title: string;
   variantId: string; // gid://… (first variant)
+  imageUrl: string;
 }
 
 /* ---------- props   ----------------------------------------- */
@@ -88,34 +90,42 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
           </Box>
         ) : (
           <ResourceList
-            resourceName={{singular: "product", plural: "products"}}
+            resourceName={{ singular: "product", plural: "products" }}
             items={items}
             selectedItems={Array.from(selectedIds)}
             selectable
-            renderItem={(item) => (
+          renderItem={(item) => {
+            const media = (
+              <Thumbnail
+                size="small"
+                source={
+                  item.imageUrl ||
+                  "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_large.png"
+                }
+                alt={item.title}
+              />
+            );
+
+            return (
               <ResourceItem
                 id={item.id}
+                media={media}                                          /* ✨ thumbnail */
                 accessibilityLabel={`Select ${item.title}`}
-                onClick={() => {
-                  // Optionally toggle selection or handle click as needed
+                verticalAlignment="center"
+                onClick={() =>
                   setSelectedIds((prev) => {
-                    const newSet = new Set(prev);
-                    if (newSet.has(item.id)) {
-                      newSet.delete(item.id);
-                    } else {
-                      newSet.add(item.id);
-                    }
-                    return newSet;
-                  });
-                }}
+                    const next = new Set(prev);
+                    next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                    return next;
+                  })
+                }
               >
                 {item.title}
               </ResourceItem>
-            )}
-            onSelectionChange={(ids) =>
-              setSelectedIds(new Set(ids as string[]))
-            }
-          />
+            );
+          }}
+          onSelectionChange={(ids) => setSelectedIds(new Set(ids as string[]))}
+        />
         )}
 
         {selectedIds.size > 0 && (

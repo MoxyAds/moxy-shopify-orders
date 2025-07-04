@@ -12,6 +12,8 @@ import {
   InlineError,
   ResourceList,
   ResourceItem,
+  Thumbnail,
+  LegacyStack as Stack,
 } from "@shopify/polaris";
 
 import { useState } from "react";
@@ -130,24 +132,27 @@ export default function CreateOrder() {
                     resourceName={{ singular: "product", plural: "products" }}
                     items={products}
                     renderItem={(p) => (
-                      <ResourceItem
-                        id={p.id}
-                        accessibilityLabel={p.title}
-                        onClick={() => {}}
-                      >
-                        {p.title}
-                        {/* remove chip */}
-                        <Button
-                          variant="plain"
-                          onClick={() =>
-                            setProducts((prev) => prev.filter((x) => x.id !== p.id))
-                          }
+                        <ResourceItem
+                          id={p.id}
+                          media={<Thumbnail size="small" source={p.imageUrl} alt={p.title} />}  /* ✨ */
+                          onClick={() => {}}
                         >
-                          Remove
-                        </Button>
-                        {/* one hidden input per variant */}
-                        <input type="hidden" name="variantId" value={p.variantId} />
-                      </ResourceItem>
+                          <Stack alignment="center">
+                            <Stack.Item fill>{p.title}</Stack.Item>
+
+                            <Button
+                              variant="plain"
+                              onClick={() =>
+                                setProducts((prev) => prev.filter((x) => x.id !== p.id))
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </Stack>
+
+                          {/* hidden field(s) */}
+                          <input type="hidden" name="variantId" value={p.variantId} />
+                        </ResourceItem>
                     )}
                   />
                 )}
