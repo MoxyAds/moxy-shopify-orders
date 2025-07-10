@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Autocomplete }            from "@shopify/polaris";
 
-export type Option = { label: string; value: string };
+export type Option = { label: string; value: string; zip?: string};
 
 interface Props {
   /** Where to fetch — `/api.novaposhta.cities` or `/api.novaposhta.warehouses?city=…` */
@@ -25,9 +25,8 @@ export default function CityAutocomplete({
   /** Hit our loader every key-stroke (debounced in real life) */
   const update = useCallback(async (term: string) => {
 
-    if (term.length < 2) {
-      setOptions([]);          // show nothing
-      setLoading(false);
+    if (!term) {
+      setOptions([]);
       return;
     }
 
@@ -39,6 +38,8 @@ export default function CityAutocomplete({
     const opts = raw.map((c) => ({
       label : c.Present ?? c.present ?? c.Description,
       value : c.Ref    ?? c.ref,     // <- will always be the city ref
+      zip   : c.Index1 ?? c.index1 ?? c.PostIndex
+             ?? c.DeliveryCityIndex ?? undefined,
     }));
 
     setOptions(opts);

@@ -13,12 +13,20 @@ import {
   ResourceList,
   ResourceItem,
   Thumbnail,
+  Checkbox,
   LegacyStack as Stack,
 } from "@shopify/polaris";
 
 import { useState } from "react";
 
-import { authenticate } from "app/shopify.server";
+import {
+  authenticate,
+  createDraftOrder,
+  getOrCreateCustomer,
+  normaliseUA,
+  safeZip,
+} from "app/shopify.server";
+
 import CityAutocomplete, { type Option } from "app/components/CityAutocomplete";
 import type { Product } from "app/components/ProductPicker";
 import ProductPicker from "app/components/ProductPicker";
@@ -30,40 +38,123 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const body  = await request.formData();
-  const lines = body.getAll("variantId")               // ← multiple values
-                   .map((id) => ({ variantId: id, quantity: 1 }));
+  /* ──────────── gather & validate form data ─────────── */
+  const body = await request.formData();
+
+  const ids  = body.getAll("variantId");
+  const qtys = body.getAll("qty").map(Number);
+  const lines = ids.map((id, i) => ({
+    variantId: id,
+    quantity : qtys[i] || 1,
+  }));
 
   const required = ["first", "last", "phone", "cityRef", "warehouseRef"];
-  const missing  =
-    required.filter((f) => !body.get(f)).concat(lines.length ? [] : ["variantId"]);
-  if (missing.length)
-    return json({ error: `Missing fields: ${missing.join(",")}` }, { status: 400 });
+  const missing =
+    required.filter(k => !body.get(k)).concat(lines.length ? [] : ["variantId"]);
 
+  if (missing.length) {
+    return json({ error: `Missing fields: ${missing.join(",")}` }, { status: 400 });
+  }
+
+  const isCOD = body.get("cod") === "1";
   const { admin } = await authenticate.admin(request);
 
-  const draft = {
-    lineItems: lines,
-    shippingAddress: {
-      firstName : body.get("first"),
-      lastName  : body.get("last"),
-      phone     : body.get("phone"),
-      city      : body.get("cityName"),
-      address1  : `Nova Poshta warehouse ${body.get("warehouseRef")}`,
-    },
-    note: "Created from in-house admin panel",
-  };
-
-  const res = await admin.graphql(
-    `mutation($draft: DraftOrderInput!){ draftOrderCreate(input:$draft){
-        draftOrder{ id } userErrors{ message } }}`,
-    { variables: { draft } },
+  /* ──────────── ensure / create the customer ─────────── */
+  const customerId = await getOrCreateCustomer(
+    admin,
+    body.get("first") as string,
+    body.get("last")  as string,
+    body.get("phone") as string,
   );
-  const raw = await res.json() as any;
-  if (raw.errors?.length || raw.data.draftOrderCreate.userErrors.length)
-    return json({ error: "Shopify API error – check logs" }, { status: 500 });
 
-  return redirect("/app/orders");
+  try {
+    /* create draft (4 args) */
+    const draftId = await createDraftOrder(
+      admin,
+      lines,
+      {
+        firstName : body.get("first"),
+        lastName  : body.get("last"),
+        phone     : normaliseUA(body.get("phone") as string),   // +380…
+        city      : body.get("cityName"),
+        address1  : `Нова Пошта – ${body.get("warehouseName")}`,
+        zip       : safeZip(body.get("postalCode")),
+      },
+      {
+        npRefs: {
+          cityRef      : body.get("cityRef"),
+          warehouseRef : body.get("warehouseRef"),
+        },
+        customerId,
+        cod : isCOD,
+        tags: isCOD ? ["COD"] : [],
+        note: isCOD
+          ? "Накладений платіж / Cash-on-Delivery (300 ₴ передплата)"
+          : "Оплачено повністю",
+
+        /* pretty info for “Additional details” */
+        cityLabel      : body.get("cityName"),
+        warehouseLabel : body.get("warehouseName"),
+        recipientPhone : normaliseUA(body.get("phone") as string),
+      },
+    );
+
+    /* complete the draft → real order (paymentPending makes it “Partially paid”) */
+    const COMPLETE_DRAFT = /* GraphQL */ `
+      mutation completeDraft($id: ID!, $pending: Boolean) {
+        draftOrderComplete(id: $id, paymentPending: $pending) {
+          draftOrder { id order { id } }
+          userErrors { message }
+        }
+      }
+    `;
+
+    const completeRes = await admin.graphql(COMPLETE_DRAFT, {
+      variables: { id: draftId, pending: isCOD },
+    });
+    const completeJson: any = await completeRes.json();
+
+    const errs = [
+      ...(completeJson.errors ?? []),
+      ...(completeJson.data?.draftOrderComplete?.userErrors ?? []),
+    ];
+    if (errs.length) throw new Error(errs.map((e: any) => e.message).join("; "));
+
+    /* real Order GID we’ll attach the deposit to */
+    const orderGid: string | null =
+      completeJson.data.draftOrderComplete.draftOrder.order?.id ?? null;
+
+    /* ---- mark COD deposit in a metafield -------------------------------- */
+    if (isCOD && orderGid) {
+      await admin.graphql(
+        `
+          mutation setMeta($mfs: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $mfs) {
+              userErrors { field message }
+            }
+          }
+        `,
+        {
+          variables: {
+            mfs: [
+              {
+                ownerId:   orderGid,       // 👈 goes *inside* the input object
+                namespace: "cod",
+                key:       "deposit_amount",
+                type:      "single_line_text_field",
+                value:     "300.00 UAH",
+              },
+            ],
+          },
+        },
+      );
+    }
+
+    return redirect("/app/orders");
+  } catch (err: any) {
+    console.error(err);
+    return json({ error: err.message }, { status: 500 });
+  }
 };
 
 /* ───────────────────────── component ────────────────────────── */
@@ -78,6 +169,7 @@ export default function CreateOrder() {
   const [phone, setPhone] = useState("");
   const [city,  setCity]  = useState<Option | null>(null);
   const [wh,    setWh]    = useState<Option | null>(null);
+  const [cod,   setCod]   = useState(false);
 
   const actionData = useActionData<typeof action>();
 
@@ -109,6 +201,8 @@ export default function CreateOrder() {
                 <input type="hidden" name="cityRef"      value={city?.value ?? ""} />
                 <input type="hidden" name="cityName"     value={city?.label ?? ""} />
                 <input type="hidden" name="warehouseRef" value={wh?.value   ?? ""} />
+                <input type="hidden" name="warehouseName" value={wh?.label ?? ""} />
+                <input type="hidden" name="postalCode" value={city?.zip ?? ""} />
 
                 {/* ---- cascading city-/warehouse-pickers ------------ */}
                 <CityAutocomplete
@@ -126,34 +220,91 @@ export default function CreateOrder() {
                   />
                 )}
 
+                {/* ---- COD checkbox ------------------------------ */}
+              <Checkbox
+                label="Накладений платіж (передплата 300 ₴)"
+                checked={cod}
+                onChange={setCod}
+              />
+              {/* hidden field so the <form> sends it */}
+              <input type="hidden" name="cod" value={cod ? "1" : ""} />
+
                 {/* ---- product list preview + hidden inputs -------- */}
                 {products.length > 0 && (
                   <ResourceList
                     resourceName={{ singular: "product", plural: "products" }}
                     items={products}
-                    renderItem={(p) => (
+                    renderItem={(p) => {
+                      const selectedVariant =
+                        p.variants.find((v) => v.id === p.pickedVariantId) ?? p.variants[0];
+
+                      return (
                         <ResourceItem
                           id={p.id}
-                          media={<Thumbnail size="small" source={p.imageUrl} alt={p.title} />}  /* ✨ */
+                          media={
+                            <Thumbnail
+                              size="small"
+                              source={
+                                (p.variants.find(v => v.id === p.pickedVariantId)?.image) ||
+                                "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_large.png"
+                              }
+                              alt={p.title}
+                            />
+                          }
                           onClick={() => {}}
                         >
-                          <Stack alignment="center">
-                            <Stack.Item fill>{p.title}</Stack.Item>
+                          <Stack alignment="center" spacing="tight">
+                            <Stack.Item fill>
+                              <div style={{ fontWeight: 600 }}>{p.title}</div>
+
+                              {/* variant selector */}
+                              <select
+                                value={p.pickedVariantId}
+                                onChange={(e) =>
+                                  setProducts(prev =>
+                                    prev.map(x =>
+                                      x.id === p.id
+                                        ? { ...x, pickedVariantId: e.currentTarget.value }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                {p.variants.map(v => (
+                                  <option key={v.id} value={v.id}>{v.title}</option>
+                                ))}
+                              </select>
+
+                              {/* quantity */}
+                              <input
+                                type="number"
+                                min={1}
+                                style={{ width: 70, marginLeft: 8 }}
+                                value={p.qty ?? 1}
+                                onChange={(e) =>
+                                  setProducts(prev =>
+                                    prev.map(x =>
+                                      x.id === p.id ? { ...x, qty: Number(e.currentTarget.value) } : x,
+                                    ),
+                                  )
+                                }
+                              />
+                            </Stack.Item>
 
                             <Button
                               variant="plain"
-                              onClick={() =>
-                                setProducts((prev) => prev.filter((x) => x.id !== p.id))
-                              }
+                              onClick={() => setProducts(prev => prev.filter(x => x.id !== p.id))}
                             >
                               Remove
                             </Button>
                           </Stack>
 
-                          {/* hidden field(s) */}
-                          <input type="hidden" name="variantId" value={p.variantId} />
+                          {/* hidden fields sent to the server */}
+                          <input type="hidden" name="variantId" value={p.pickedVariantId} />
+                          <input type="hidden" name="qty"       value={p.qty ?? 1} />
                         </ResourceItem>
-                    )}
+                      );
+                    }}
                   />
                 )}
 

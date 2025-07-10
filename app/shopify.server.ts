@@ -103,3 +103,141 @@ export const getOrders = async (admin: any) => {
     throw error;
   }
 };
+
+// ────────────────────────────────────────────────────────────
+//  Draft Orders
+// ────────────────────────────────────────────────────────────
+type DraftOrderLine = { variantId: unknown; quantity: number };
+
+/** Options you may want to tweak per-order */
+interface DraftExtras {
+  /* required bits */
+  npRefs: { cityRef: unknown; warehouseRef: unknown };
+  cod: boolean;
+
+  /* optional Shopify fields */
+  tags?: string[];
+  note?: string;
+
+  /* 👇 Any other key is welcome */
+  [key: string]: unknown;
+}
+
+/**
+ * Creates a Shopify Draft Order and returns its GID.
+ * Throws with a readable message if Shopify responds with userErrors / errors.
+ */
+export async function createDraftOrder(
+  admin: any,
+  lines: DraftOrderLine[],
+  shipping: {
+    firstName: unknown;
+    lastName : unknown;
+    phone    : unknown;
+    city     : unknown;
+    address1 : unknown;
+    zip?     : unknown;
+  },
+  extras: DraftExtras,
+) {
+  /* ───────────────── shape DraftOrderInput ─────────────────── */
+  const draft: Record<string, unknown> = {
+    lineItems: lines,
+    shippingAddress: shipping,
+    phone: shipping.phone,
+    // standard fields
+    tags: extras.tags ?? (extras.cod ? ["COD"] : []),
+    note:
+      extras.note ??
+      (extras.cod
+        ? "Накладений платіж / Cash-on-Delivery (300 ₴ передплата)"
+        : "Оплачено повністю"),
+    // customAttributes keep NovaPoshta refs (+ COD flag so it’s queryable)
+    customAttributes: [
+      { key: "NP-cityRef",      value: String(extras.npRefs.cityRef) },
+      { key: "NP-warehouseRef", value: String(extras.npRefs.warehouseRef) },
+      { key: "COD",             value: extras.cod ? "true" : "false" },
+    ],
+  };
+
+  /* ───────────────── call Shopify Admin API ────────────────── */
+  const res = await admin.graphql(
+    `
+      mutation ($draft: DraftOrderInput!) {
+        draftOrderCreate(input: $draft) {
+          draftOrder { id }
+          userErrors  { field message }
+        }
+      }
+    `,
+    { variables: { draft } },
+  );
+
+  const payload = await res.json();
+  const apiErrors   = payload.errors ?? [];
+  const userErrors  = payload.data?.draftOrderCreate?.userErrors ?? [];
+
+  if (apiErrors.length || userErrors.length) {
+    const details = [...apiErrors, ...userErrors]
+      .map((e: any) => e.message ?? JSON.stringify(e))
+      .join("; ");
+    throw new Error("Shopify API error: " + details);
+  }
+
+  return payload.data.draftOrderCreate.draftOrder.id as string;
+}
+
+
+/**
+ * Return an existing customer that matches the phone OR create one and
+ * return the new GID.  Phone is normalised to +380XXXXXXXXX first.
+ */
+export async function getOrCreateCustomer(
+  admin: any,
+  firstName: string,
+  lastName: string,
+  rawPhone: string,
+) {
+  const phone = normaliseUA(rawPhone);           //  ➜  +38… format
+
+  /* 1️⃣ Look-up by phone ------------------------------------------------ */
+  const find = await admin.graphql(`
+    query ($q: String!) {
+      customers(first: 1, query: $q) { edges { node { id } } }
+    }`,
+    { variables: { q: `phone:${phone}` } },
+  );
+  const found = (await find.json()).data.customers.edges[0]?.node?.id;
+  if (found) return found;
+
+  /* 2️⃣ Create new ------------------------------------------------------ */
+  const create = await admin.graphql(`
+    mutation ($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer   { id }
+        userErrors { message }
+      }
+    }`,
+    { variables: { input: { firstName, lastName, phone } } },
+  );
+  const createJson = await create.json();
+  const errs = createJson.data.customerCreate.userErrors;
+  if (errs.length) throw new Error(errs.map((e: any) => e.message).join("; "));
+
+  return createJson.data.customerCreate.customer.id as string;
+}
+
+/* Helper used above */
+export function normaliseUA(n: string) {
+  const digits = n.replace(/\D/g, "");          // strip spaces, dashes …
+  return digits.startsWith("380") ? `+${digits}` : `+38${digits}`;
+}
+
+/**
+ * Make sure we always hand Shopify *some* postal code.
+ * If Nova Poshta didn’t return Index1, fall back to Kyiv’s 01001.
+ */
+export function safeZip(raw: unknown) {
+  const z = String(raw ?? "").trim();
+  return /^\d{5}$/.test(z) ? z : "01001";          // Kyiv - central PO
+}

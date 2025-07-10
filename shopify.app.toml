@@ -3,7 +3,7 @@
 client_id = "5ce97e211867db2807e56152426ac4f5"
 name = "moxy-demo"
 handle = "moxy-demo"
-application_url = "https://describe-browsers-worldcat-qt.trycloudflare.com"
+application_url = "https://jurisdiction-compiler-graduated-existed.trycloudflare.com"
 embedded = true
 
 [build]
@@ -23,10 +23,17 @@ api_version = "2025-07"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_discounts,read_fulfillments,read_orders,read_products,read_shipping,write_discounts,write_fulfillments,write_orders,write_products,write_shipping"
+scopes = """
+read_customers,write_customers,
+read_discounts,write_discounts,
+read_fulfillments,write_fulfillments,
+read_orders,write_orders,write_draft_orders,
+read_products,write_products,
+read_shipping,write_shipping
+"""
 
 [auth]
-redirect_urls = ["https://describe-browsers-worldcat-qt.trycloudflare.com/auth/callback", "https://describe-browsers-worldcat-qt.trycloudflare.com/auth/shopify/callback", "https://describe-browsers-worldcat-qt.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://jurisdiction-compiler-graduated-existed.trycloudflare.com/auth/callback", "https://jurisdiction-compiler-graduated-existed.trycloudflare.com/auth/shopify/callback", "https://jurisdiction-compiler-graduated-existed.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false

@@ -15,8 +15,9 @@ import {useState, useEffect, useCallback} from "react";
 export interface Product {
   id: string;        // gid://…
   title: string;
-  variantId: string; // gid://… (first variant)
-  imageUrl: string;
+  variants: {id: string; title: string; image: string}[];
+  pickedVariantId?: string;
+  qty?: number;
 }
 
 /* ---------- props   ----------------------------------------- */
@@ -37,6 +38,12 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(
     picked.map((p) => p.id),
   ));
+  const [variantForId, setVariantForId] = useState<Record<string,string>>(
+    () =>
+      Object.fromEntries(
+        picked.map(p => [p.id, p.pickedVariantId ?? p.variants[0].id]),
+      ),
+  );
 
   /* bring selection back in sync if parent resets it */
   useEffect(() => {
@@ -45,15 +52,18 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
 
   /* ----- backend search  -------------------------------------- */
   const search = useCallback(async (term: string) => {
-    if (!term) return setItems([]);
+
     setLoading(true);
-    const res  = await fetch(`/app/products/search?q=${encodeURIComponent(term)}`);
-    const list = await res.json();
-    setItems(list);
+
+    const res = await fetch(`/app/products/search?q=${encodeURIComponent(term)}`);
+    const { products } = await res.json();          // products is the array we shaped above
+    setItems(products);
     setLoading(false);
   }, []);
 
-  useEffect(() => { search(query); }, [query, search]);
+  useEffect(() => {
+    if (open) search(query);            // empty query ⇒ full list
+  }, [open, query, search]);
 
   /* ----- build Product[] out of selectedIds ------------------- */
   const selectedProducts = items
@@ -69,7 +79,14 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
       primaryAction={{
         content: `Add ${selectedIds.size}`,
         onAction: () => {
-          onSelect(selectedProducts);
+          const out = selectedProducts.map((p) => ({
+            id   : p.id,
+            title: p.title,
+            variants: p.variants,
+            pickedVariantId: variantForId[p.id] ?? p.variants[0].id,
+            qty: p.qty ?? 1,
+          }));
+          onSelect(out);
           onClose();
         },
         disabled: selectedIds.size === 0,
@@ -94,17 +111,17 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
             items={items}
             selectedItems={Array.from(selectedIds)}
             selectable
-          renderItem={(item) => {
-            const media = (
-              <Thumbnail
-                size="small"
-                source={
-                  item.imageUrl ||
-                  "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_large.png"
-                }
-                alt={item.title}
-              />
-            );
+            renderItem={(item) => {
+              const variantId   = variantForId[item.id] ?? item.variants[0].id;
+              const variantInfo =
+                item.variants.find(v => v.id === variantId) ?? item.variants[0];  // ✔ safe
+              const media = (
+                <Thumbnail
+                  size="small"
+                  source={variantInfo.image}
+                  alt={`${item.title} – ${variantInfo.title}`}
+                />
+              );
 
             return (
               <ResourceItem
@@ -120,7 +137,20 @@ export default function ProductPicker({open, onClose, picked, onSelect}: Props) 
                   })
                 }
               >
-                {item.title}
+                <strong>{item.title}</strong><br/>
+                {/* variant selector */}
+                <select
+                  value={variantId}
+                  onChange={e =>
+                    setVariantForId({ ...variantForId, [item.id]: e.currentTarget.value })
+                  }
+                >
+                  {item.variants.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.title}                        {/* now shows “Black / L” etc. */}
+                    </option>
+                  ))}
+                </select>
               </ResourceItem>
             );
           }}
